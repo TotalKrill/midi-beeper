@@ -15,15 +15,30 @@ use structopt::StructOpt;
 #[structopt(name = "options")]
 struct Opts {
     #[structopt(short, long, default_value = "1")]
+    /// The time each delta is in milliseconds, must be larger than zero
     delta_ms: f32,
+
+    #[structopt(short, long, default_value = "1")]
+    /// Speed of the play
+    speed: f32,
+
     #[structopt(short, long, default_value = "0")]
+    /// Which track to use for the files
     track: usize,
+
+    #[structopt(short, long)]
+    /// from which note number should we play?
+    from_note: Option<usize>,
+
+    #[structopt(short, long)]
+    /// to which note number should we play?
+    until_note: Option<usize>,
 
     #[structopt(name = "MIDI_FILE")]
     file: String,
 }
 
-fn mid_to_freq(d: usize) -> f32 {
+fn mid_to_freq(d: u8) -> f32 {
     let two = 2.0f32;
     let freq = two.powf((d as f32 - 69.0) / 12.0) * 440.0;
     freq
@@ -43,14 +58,14 @@ fn main() -> anyhow::Result<()> {
     println!("header: {:?}", midi.header);
 
     // the length of each delta_time in ms
-    let delta_ms = match midi.header.division {
-        Division::Metrical(number) => 1000.0 / number as f32,
-        Division::Timecode { fps, res } => {
-            let fps: u8 = fps.into();
+    // let delta_ms = match midi.header.division {
+    //     Division::Metrical(number) => 1000.0 / number as f32,
+    //     Division::Timecode { fps, res } => {
+    //         let fps: u8 = fps.into();
 
-            (1.0 / fps as f32) / res as f32
-        }
-    };
+    //         (1.0 / fps as f32) / res as f32
+    //     }
+    // };
 
     let delta_ms = opt.delta_ms;
 
@@ -99,47 +114,88 @@ fn main() -> anyhow::Result<()> {
             }
             prev_time = current_time;
         }
-        //let ms = 60.0 / 200.0;
-        println!("total time: {}", current_time as f32 * delta_ms);
-
-        // time taken from the mario video in seconds, so might not be very exact
-        //let units_per_second = current_time as f32 / 176.0;
-        // let units_per_second = ;
-        // let each_unit_ms = units_per_second / 1000.0;
-        // println!("units: {}", units_per_second);
-        // println!("each: {}", each_unit_ms);
+        println!("total time: {} ms", current_time as f32 * delta_ms);
+        println!("notes: {}", changes.len());
 
         // start playing
+        let speed = opt.speed;
+
         let device = rodio::default_output_device().unwrap();
         let sink = Sink::new(&device);
 
         let mut prevtime = 0;
         let mut prevkeys: Option<HashSet<u8>> = None;
+
+        let mut notenum = 0;
+
+        //let mut outvec = Vec::new();
         for (time, keys) in changes {
-            println!("time: {}, notes: {:?}", time, keys);
+            if let Some(from_note) = opt.from_note {
+                // Do nothing until we are at a larger number
+                if notenum < from_note {
+                    notenum += 1;
+                    prevkeys = Some(keys);
+                    prevtime = time;
+                    continue;
+                }
+            }
+
+            //println!("time: {}, notes: {:?}", time, keys);
             let (mixer_ctl, mixer) = rodio::dynamic_mixer::mixer(1, 48000);
 
             let duration = time - prevtime;
             //let duration = duration * each_unit_ms.round() as u32;
-            let duration = duration as f32 * delta_ms;
+            let duration = duration as f32 * delta_ms / speed;
 
             //println!("duration in ms: {}", duration);
 
             if let Some(keys) = prevkeys {
                 use std::time::Duration;
-                prevtime = time;
                 if keys.is_empty() {
                     let source = Tone::new(0.0, Duration::from_millis(duration as u64));
                     mixer_ctl.add(source);
                 }
+
+                let mut freqs = Vec::new();
                 for key in &keys {
-                    let f = mid_to_freq(key.clone().into());
-                    let source = Tone::new(f, Duration::from_millis(duration as u64));
-                    mixer_ctl.add(source);
+                    let key: u8 = key.clone().clone();
+                    let freq = mid_to_freq(key);
+                    freqs.push(freq);
+
+                    let source = Tone::new(freq, Duration::from_millis(duration as u64));
+                    //mixer_ctl.add(source);
+                    //break;
                 }
-                sink.append(mixer);
+
+                // // Trying averaging the frequencies
+                // let f = if !freqs.is_empty() {
+                //     let sum: f32 = freqs.iter().sum();
+                //     let num = freqs.len();
+                //     sum / num as f32
+                // } else {
+                //     0.0
+                // };
+                let freqs: Vec<u32> = freqs.into_iter().map(|f| f.round() as u32).collect();
+                let maxf = freqs.into_iter().max().unwrap_or(0);
+                let source = Tone::new(maxf as f32, Duration::from_millis(duration as u64));
+                mixer_ctl.add(source);
+
+                if duration > 1.0 {
+                    // let text = format!("{},\t{:?}", duration, maxf);
+                    // println!("{}", text);
+                    sink.append(mixer);
+                }
+
+                if let Some(until_note) = opt.until_note {
+                    // Abort when we have passed the larger number
+                    if notenum > until_note {
+                        break;
+                    }
+                }
             }
+            notenum += 1;
             prevkeys = Some(keys);
+            prevtime = time;
         }
         sink.sleep_until_end();
     }
