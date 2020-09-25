@@ -239,8 +239,9 @@ fn main() -> anyhow::Result<()> {
         println!("\ttotal time: {} seconds", total_duration as f32 / 1000.0);
         println!("\tnotes:      {}", melody.len());
 
-        if !opt.quiet {
+        if opt.quiet {
             println!("-q flag set, skipping playing the sound");
+        } else {
             sink.sleep_until_end();
         }
 
