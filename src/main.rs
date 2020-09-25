@@ -2,28 +2,32 @@ use nom_midi::*;
 
 use std::fs::File;
 use std::io::prelude::*;
+use std::path::PathBuf;
 
 use rodio::Sink;
 mod tone;
+use log::*;
 
 use anyhow;
 use tone::Tone;
 
 use structopt::StructOpt;
 
+// enum OutputFormat {
+//     Csv,
+//     Rust,
+//     C,
+// }
+
 #[derive(StructOpt, Debug)]
 #[structopt(name = "options")]
 struct Opts {
     #[structopt(short, long, default_value = "1")]
-    /// The time each delta is in milliseconds, must be larger than zero
-    delta_ms: f32,
-
-    #[structopt(short, long, default_value = "1")]
-    /// Speed of the play
+    /// This is a multiplier of the playback speed,
     speed: f32,
 
     #[structopt(short, long, default_value = "0")]
-    /// Which track to use for the files
+    /// Midi files contains many tracks, this tool will only act on a single one, which track to use for the files
     track: usize,
 
     #[structopt(short, long)]
@@ -34,8 +38,15 @@ struct Opts {
     /// to which note number should we play?
     until_note: Option<usize>,
 
-    #[structopt(name = "MIDI_FILE")]
-    file: String,
+    #[structopt(name = "MIDI_FILE", parse(from_os_str))]
+    file: PathBuf,
+
+    /// Output file, if not specified no output will be shown
+    #[structopt(long, parse(from_os_str))]
+    output: Option<PathBuf>,
+
+    #[structopt(short)]
+    quiet: bool,
 }
 
 fn mid_to_freq(d: u8) -> f32 {
@@ -55,7 +66,7 @@ fn main() -> anyhow::Result<()> {
 
     let (_, midi) = parser::parse_smf(&midi).expect("Could not parse midi file");
 
-    println!("header: {:?}", midi.header);
+    debug!("header: {:?}", midi.header);
 
     // the length of each delta_time in ms
     // let delta_ms = match midi.header.division {
@@ -67,7 +78,7 @@ fn main() -> anyhow::Result<()> {
     //     }
     // };
 
-    let delta_ms = opt.delta_ms;
+    let delta_ms = 1.0;
 
     if let Some(track) = midi.tracks.get(opt.track) {
         use std::collections::HashSet;
@@ -114,11 +125,26 @@ fn main() -> anyhow::Result<()> {
             }
             prev_time = current_time;
         }
-        println!("total time: {} ms", current_time as f32 * delta_ms);
-        println!("notes: {}", changes.len());
+        let speed = opt.speed;
+
+        println!("Midi info:");
+        println!("\tTotal amount of tracks: {}", midi.tracks.len());
+        println!("\tTrack {} Notes: {}", opt.track, changes.len());
+        println!(
+            "\tTrack {} length (speed = 1.0): {} seconds",
+            opt.track,
+            current_time as f32 / 1000.0
+        );
+        if opt.speed != 1.0 {
+            println!(
+                "\tTrack {} modified length (speed = {}): {} seconds",
+                opt.track,
+                opt.speed,
+                current_time as f32 / 1000.0 / speed
+            );
+        }
 
         // start playing
-        let speed = opt.speed;
 
         let device = rodio::default_output_device().unwrap();
         let sink = Sink::new(&device);
@@ -128,7 +154,7 @@ fn main() -> anyhow::Result<()> {
 
         let mut notenum = 0;
 
-        //let mut outvec = Vec::new();
+        let mut melody = Vec::new();
         for (time, keys) in changes {
             if let Some(from_note) = opt.from_note {
                 // Do nothing until we are at a larger number
@@ -162,7 +188,7 @@ fn main() -> anyhow::Result<()> {
                     let freq = mid_to_freq(key);
                     freqs.push(freq);
 
-                    let source = Tone::new(freq, Duration::from_millis(duration as u64));
+                    // let source = Tone::new(freq, Duration::from_millis(duration as u64));
                     //mixer_ctl.add(source);
                     //break;
                 }
@@ -175,14 +201,19 @@ fn main() -> anyhow::Result<()> {
                 // } else {
                 //     0.0
                 // };
+
+                // Pick out the max frequency if there are multiple, dont mix them
                 let freqs: Vec<u32> = freqs.into_iter().map(|f| f.round() as u32).collect();
                 let maxf = freqs.into_iter().max().unwrap_or(0);
+
                 let source = Tone::new(maxf as f32, Duration::from_millis(duration as u64));
                 mixer_ctl.add(source);
 
                 if duration > 1.0 {
                     // let text = format!("{},\t{:?}", duration, maxf);
                     // println!("{}", text);
+                    melody.push((duration as u32, maxf));
+
                     sink.append(mixer);
                 }
 
@@ -197,7 +228,44 @@ fn main() -> anyhow::Result<()> {
             prevkeys = Some(keys);
             prevtime = time;
         }
-        sink.sleep_until_end();
+        debug!("{:#?}", melody);
+
+        let mut total_duration = 0;
+        for tone in &melody {
+            total_duration += tone.0;
+        }
+        println!("");
+        println!("Melody length and time with current settings:",);
+        println!("\ttotal time: {} seconds", total_duration as f32 / 1000.0);
+        println!("\tnotes:      {}", melody.len());
+
+        if !opt.quiet {
+            println!("-q flag set, skipping playing the sound");
+            sink.sleep_until_end();
+        }
+
+        if let Some(outfilepath) = opt.output {
+            println!("Writing to file");
+
+            let mut f = File::create(outfilepath)?;
+
+            let mut text = String::new();
+
+            text.push_str(
+                "/// Melody is formatted such as (duration_milliseconds, frequency_of_tone)\n",
+            );
+
+            let s = format!("pub const MELODY: [(u32, u32); {}] = [\n", melody.len());
+            text.push_str(&s);
+
+            for tone in melody {
+                let s = format!("  ({},\t{}),\n", tone.0, tone.1);
+                text.push_str(&s);
+            }
+
+            text.push_str("];\n");
+            f.write_all(text.as_bytes())?;
+        }
     }
 
     Ok(())
