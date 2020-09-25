@@ -3,8 +3,10 @@ name = "midi-beeper"
 version = "0.1.1"
 authors = ["Kristoffer Ödmark <kristoffer.odmark90@gmail.com>"]
 edition = "2018"
-description = "README.md"
+description = "A small tool to help create simple melodies from MIDI files"
+readme = "README.md"
 license= "MIT"
+repository = "www.github.com/totalkrill/midi-beeper"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
