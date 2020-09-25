@@ -4,7 +4,7 @@ version = "0.1.1"
 authors = ["Kristoffer Ödmark <kristoffer.odmark90@gmail.com>"]
 edition = "2018"
 description = "README.md"
-license= ["MIT"]
+license= "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
