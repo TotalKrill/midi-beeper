@@ -7,6 +7,13 @@ on the simplest way in embedded systems.
 If you want to play more advanced sounds on such system, it is better to just use WAV files and
 play those on some kind of speaker instead. Advanced files usually fails in this tool, since the song
 
+## Installing or building
+
+On ubuntu, libasound2-dev is needed
+
+    apt-get install libasound2-dev
+
+
 ## Usage
 
 Many midi files are quite advanced, this tool is not. So to get a sound we will use the trial and
